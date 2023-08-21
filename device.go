@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/endocrimes/keylight-go"
 )
@@ -23,6 +25,31 @@ type KeylightDevice struct {
 
 func (device KeylightDevice) GetDNSAddr() string {
 	return device.DNSAddr
+}
+
+func DeviceString(
+	device Device,
+	info keylight.DeviceInfo,
+	settings keylight.DeviceSettings,
+	lightGroup keylight.LightGroup,
+) string {
+	var sb strings.Builder
+
+	sb.WriteString("Device: ")
+	sb.WriteString(device.GetDNSAddr())
+	sb.WriteString("\n")
+	sb.WriteString("DeviceInfo: ")
+	sb.WriteString(fmt.Sprintf("%+v", info))
+	sb.WriteString("\n")
+	sb.WriteString("DeviceSettings: ")
+	sb.WriteString(fmt.Sprintf("%+v", settings))
+	sb.WriteString("\n")
+	sb.WriteString("LightGroup: ")
+	for _, light := range lightGroup.Lights {
+		sb.WriteString(fmt.Sprintf("%+v", light))
+	}
+
+	return sb.String()
 }
 
 // Make sure the upstream keylight.Device implements this interface.

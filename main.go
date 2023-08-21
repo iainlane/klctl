@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/endocrimes/keylight-go"
@@ -44,12 +45,11 @@ const (
 const defaultPort = "9123"
 
 var (
-	lightList []Device
-	logLevel  string
-	timeout   int
+	logLevel string
+	timeout  int
 )
 
-func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discoverer) ([]Device, error) {
+func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discovery) ([]Device, error) {
 	var devices []Device
 
 	for _, lightAddr := range lightAddrs {
@@ -75,12 +75,14 @@ func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discovere
 
 	if len(devices) == 0 {
 		logrus.Debug("No lights provided, running discovery")
-		return discoverer.Discover(ctx)
+		return Discover(ctx, discoverer)
 	}
 	return devices, nil
 }
 
 func main() {
+	lightList := []Device{}
+
 	lightAddrs := cli.NewStringSlice()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
@@ -122,7 +124,12 @@ func main() {
 
 			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 
-			lightList, err = setupDevices(ctx, lightAddrs.Value(), &RealDiscoverer{})
+			discovery, err := keylight.NewDiscovery()
+			if err != nil {
+				return fmt.Errorf("failed to create discovery client: %w", err)
+			}
+
+			lightList, err = setupDevices(ctx, lightAddrs.Value(), &DiscoveryWrapper{discovery})
 			if err != nil {
 				cancel()
 				return err
@@ -142,32 +149,41 @@ func main() {
 			{
 				Name:   "toggle",
 				Usage:  "Toggle lights on and off",
-				Action: func(c *cli.Context) error { return setLightState(ctx, LightToggle) },
+				Action: func(c *cli.Context) error { return setLightState(ctx, lightList, LightToggle) },
 			},
 			{
 				Name:   "on",
 				Usage:  "Turn lights on",
-				Action: func(c *cli.Context) error { return setLightState(ctx, LightOn) },
+				Action: func(c *cli.Context) error { return setLightState(ctx, lightList, LightOn) },
 			},
 			{
 				Name:   "off",
 				Usage:  "Turn lights off",
-				Action: func(c *cli.Context) error { return setLightState(ctx, LightOff) },
+				Action: func(c *cli.Context) error { return setLightState(ctx, lightList, LightOff) },
 			},
 			{
 				Name:        "brightness",
 				Usage:       "Control light brightness",
-				Subcommands: makeLightControlSubcommands(ctx, ControlBrightness),
+				Subcommands: makeLightControlSubcommands(ctx, lightList, ControlBrightness),
 			},
 			{
 				Name:        "temperature",
 				Usage:       "Control light temperature",
-				Subcommands: makeLightControlSubcommands(ctx, ControlTemperature),
+				Subcommands: makeLightControlSubcommands(ctx, lightList, ControlTemperature),
 			},
 			{
-				Name:   "status",
-				Usage:  "Get device information",
-				Action: func(c *cli.Context) error { return printDeviceStatus(ctx) },
+				Name:  "status",
+				Usage: "Get device information",
+				Action: func(c *cli.Context) error {
+					status, err := getDeviceStatus(ctx, lightList)
+					if err != nil {
+						return err
+					}
+
+					fmt.Println(status)
+
+					return nil
+				},
 			},
 		},
 	}
@@ -198,7 +214,7 @@ func fetchLightGroups(ctx context.Context, lights []Device) (map[Device]*keyligh
 	return lgs, nil
 }
 
-func setLightState(ctx context.Context, state LightState) error {
+func setLightState(ctx context.Context, lightList []Device, state LightState) error {
 	lgs, err := fetchLightGroups(ctx, lightList)
 	if err != nil {
 		return err
@@ -230,23 +246,23 @@ func setLightState(ctx context.Context, state LightState) error {
 	return nil
 }
 
-func makeLightControlSubcommands(ctx context.Context, controlField LightControlField) []*cli.Command {
+func makeLightControlSubcommands(ctx context.Context, lightList []Device, controlField LightControlField) []*cli.Command {
 	return []*cli.Command{
 		{
 			Name:   "step-up",
 			Usage:  "Increase brightness or temperature",
-			Action: func(c *cli.Context) error { return adjustLightControlField(ctx, controlField, 10) },
+			Action: func(c *cli.Context) error { return adjustLightControlField(ctx, lightList, controlField, 10) },
 		},
 		{
 			Name:   "step-down",
 			Usage:  "Decrease brightness or temperature",
-			Action: func(c *cli.Context) error { return adjustLightControlField(ctx, controlField, -10) },
+			Action: func(c *cli.Context) error { return adjustLightControlField(ctx, lightList, controlField, -10) },
 		},
 		{
 			Name:  "get",
 			Usage: "Get brightness or temperature",
 			Action: func(c *cli.Context) error {
-				val, err := getLightControlField(c.Context, controlField)
+				val, err := getLightControlField(c.Context, lightList, controlField)
 				if err != nil {
 					return err
 				}
@@ -258,13 +274,13 @@ func makeLightControlSubcommands(ctx context.Context, controlField LightControlF
 		{
 			Name:   "set",
 			Usage:  "Set brightness or temperature",
-			Action: func(c *cli.Context) error { return setLightControlField(c, controlField) },
+			Action: func(c *cli.Context) error { return setLightControlField(c, lightList, controlField) },
 		},
 	}
 }
 
-func adjustLightControlField(ctx context.Context, controlField LightControlField, change int) error {
-	value, err := getLightControlField(ctx, controlField)
+func adjustLightControlField(ctx context.Context, lightList []Device, controlField LightControlField, change int) error {
+	value, err := getLightControlField(ctx, lightList, controlField)
 	if err != nil {
 		return err
 	}
@@ -276,19 +292,19 @@ func adjustLightControlField(ctx context.Context, controlField LightControlField
 		value = 0
 	}
 
-	return setLightControlFieldWithValue(ctx, controlField, value)
+	return setLightControlFieldWithValue(ctx, lightList, controlField, value)
 }
 
-func setLightControlField(c *cli.Context, controlField LightControlField) error {
+func setLightControlField(c *cli.Context, lightList []Device, controlField LightControlField) error {
 	value, err := strconv.Atoi(c.Args().First())
 	if err != nil {
 		return err
 	}
 
-	return setLightControlFieldWithValue(c.Context, controlField, value)
+	return setLightControlFieldWithValue(c.Context, lightList, controlField, value)
 }
 
-func setLightControlFieldWithValue(ctx context.Context, controlField LightControlField, value int) error {
+func setLightControlFieldWithValue(ctx context.Context, lightList []Device, controlField LightControlField, value int) error {
 	lgs, err := fetchLightGroups(ctx, lightList)
 	if err != nil {
 		return err
@@ -314,7 +330,7 @@ func setLightControlFieldWithValue(ctx context.Context, controlField LightContro
 	return nil
 }
 
-func getLightControlField(ctx context.Context, controlField LightControlField) (int, error) {
+func getLightControlField(ctx context.Context, lightList []Device, controlField LightControlField) (int, error) {
 	lgs, err := fetchLightGroups(ctx, lightList)
 	if err != nil {
 		return 0, err
@@ -334,34 +350,30 @@ func getLightControlField(ctx context.Context, controlField LightControlField) (
 	return 0, nil
 }
 
-func printDeviceStatus(ctx context.Context) error {
+func getDeviceStatus(ctx context.Context, lightList []Device) (string, error) {
+	var sb strings.Builder
+
 	for _, device := range lightList {
 		logrus.Debug("Fetching device info for ", device.GetDNSAddr())
 		deviceInfo, err := device.FetchDeviceInfo(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 
 		logrus.Debug("Fetching device settings for ", device.GetDNSAddr())
 		deviceSettings, err := device.FetchSettings(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 
 		logrus.Debug("Fetching light group for ", device.GetDNSAddr())
 		lightGroup, err := device.FetchLightGroup(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 
-		fmt.Printf("Device: %s\n", device.GetDNSAddr())
-		fmt.Printf("DeviceInfo: %+v\n", deviceInfo)
-		fmt.Printf("DeviceSettings: %+v\n", deviceSettings)
-		fmt.Printf("LightGroup: %+v\n", lightGroup)
-		for _, light := range lightGroup.Lights {
-			fmt.Printf("Light: %+v\n", light)
-		}
+		sb.WriteString(DeviceString(device, *deviceInfo, *deviceSettings, *lightGroup))
 	}
 
-	return nil
+	return sb.String(), nil
 }
