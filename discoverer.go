@@ -41,7 +41,10 @@ func (rd *RealDiscoverer) Discover(ctx context.Context) ([]*keylight.Device, err
 	for {
 		select {
 		case <-ctx.Done():
-			return nil, &discoveryTimeoutError{}
+			if ctx.Err() == context.DeadlineExceeded {
+				return nil, &discoveryTimeoutError{}
+			}
+			return nil, ctx.Err()
 		case device := <-discovery.ResultsCh():
 			devices = append(devices, device)
 			discoveryTimeout.Reset(time.Second)

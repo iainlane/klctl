@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
 	"time"
 
@@ -79,7 +80,8 @@ func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discovere
 func main() {
 	lightAddrs := cli.NewStringSlice()
 
-	var ctx context.Context
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	var cancel context.CancelFunc
 
 	app := &cli.App{
@@ -115,7 +117,7 @@ func main() {
 				return nil
 			}
 
-			ctx, cancel = context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 
 			lightList, err = setupDevices(ctx, lightAddrs.Value(), &RealDiscoverer{})
 			if err != nil {
@@ -169,6 +171,10 @@ func main() {
 
 	err := app.Run(os.Args)
 	if err != nil {
+		if err == context.Canceled {
+			logrus.Info("Interrupted")
+			return
+		}
 		logrus.Fatal(err)
 	}
 }
