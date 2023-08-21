@@ -57,7 +57,11 @@ func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discovere
 			port = defaultPort
 		}
 
-		p, _ := strconv.Atoi(port)
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 1 || p > 65535 {
+			return nil, fmt.Errorf("port must be a number between 1 and 65535 (got %s)", port)
+		}
+
 		device := &keylight.Device{
 			DNSAddr: host,
 			Port:    p,
@@ -79,7 +83,7 @@ func main() {
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{
 				Name:        "light",
-				Usage:       "Light to control",
+				Usage:       "Light to control (host:port)",
 				Destination: lightAddrs,
 			},
 			&cli.StringFlag{
