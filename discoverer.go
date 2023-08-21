@@ -35,6 +35,8 @@ func (rd *RealDiscoverer) Discover(ctx context.Context) ([]*keylight.Device, err
 		errCh <- discovery.Run(ctx)
 	}()
 
+	// keep trying until it's been a second since the last device was found,
+	// then return
 	discoveryTimeout := time.NewTimer(time.Second)
 	for {
 		select {
