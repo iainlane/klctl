@@ -48,6 +48,30 @@ var (
 	timeout   int
 )
 
+func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discoverer) ([]*keylight.Device, error) {
+	var devices []*keylight.Device
+	for _, lightAddr := range lightAddrs {
+		host, port, err := net.SplitHostPort(lightAddr)
+		if err != nil {
+			host = lightAddr
+			port = defaultPort
+		}
+
+		p, _ := strconv.Atoi(port)
+		device := &keylight.Device{
+			DNSAddr: host,
+			Port:    p,
+		}
+		devices = append(devices, device)
+	}
+
+	if len(devices) == 0 {
+		logrus.Debug("No lights provided, running discovery")
+		return discoverer.Discover(ctx)
+	}
+	return devices, nil
+}
+
 func main() {
 	lightAddrs := cli.NewStringSlice()
 
@@ -80,35 +104,16 @@ func main() {
 
 			logrus.SetLevel(level)
 
-			ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
-			defer cancel()
-
 			if c.NArg() == 0 {
 				return nil
 			}
 
-			for _, lightAddr := range lightAddrs.Value() {
-				host, port, err := net.SplitHostPort(lightAddr)
-				if err != nil {
-					host = lightAddr
-					port = defaultPort
-				}
+			ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
+			defer cancel()
 
-				p, _ := strconv.Atoi(port)
-
-				device := &keylight.Device{
-					DNSAddr: host,
-					Port:    p,
-				}
-
-				lightList = append(lightList, device)
-			}
-
-			if len(lightList) == 0 {
-				logrus.Debug("No lights provided, running discovery")
-				if err := discoverLights(ctx); err != nil {
-					return err
-				}
+			lightList, err = setupDevices(ctx, lightAddrs.Value(), &RealDiscoverer{})
+			if err != nil {
+				return err
 			}
 
 			return nil
@@ -349,30 +354,4 @@ func printDeviceStatus(c *cli.Context) error {
 	}
 
 	return nil
-}
-
-func discoverLights(ctx context.Context) error {
-	discovery, err := keylight.NewDiscovery()
-	if err != nil {
-		return err
-	}
-
-	logrus.Debug("Starting discovery")
-	errCh := make(chan error)
-	go func() {
-		errCh <- discovery.Run(ctx)
-	}()
-
-	discoveryTimeout := time.NewTimer(time.Second)
-	for {
-		select {
-		case device := <-discovery.ResultsCh():
-			lightList = append(lightList, device)
-			discoveryTimeout.Reset(time.Second)
-		case <-discoveryTimeout.C:
-			return nil
-		case err := <-errCh:
-			return err
-		}
-	}
 }
