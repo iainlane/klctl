@@ -40,6 +40,8 @@ const (
 	ControlTemperature
 )
 
+const defaultPort = "9123"
+
 var (
 	lightList []*keylight.Device
 	logLevel  string
@@ -89,7 +91,7 @@ func main() {
 				host, port, err := net.SplitHostPort(lightAddr)
 				if err != nil {
 					host = lightAddr
-					port = "9123"
+					port = defaultPort
 				}
 
 				p, _ := strconv.Atoi(port)
