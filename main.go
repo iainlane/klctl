@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/signal"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/endocrimes/keylight-go"
@@ -43,19 +45,55 @@ const (
 const defaultPort = "9123"
 
 var (
-	lightList []*keylight.Device
-	logLevel  string
-	timeout   int
+	logLevel string
+	timeout  int
 )
 
+func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discovery) ([]Device, error) {
+	var devices []Device
+
+	for _, lightAddr := range lightAddrs {
+		host, port, err := net.SplitHostPort(lightAddr)
+		if err != nil {
+			host = lightAddr
+			port = defaultPort
+		}
+
+		p, err := strconv.Atoi(port)
+		if err != nil || p < 1 || p > 65535 {
+			return nil, fmt.Errorf("port must be a number between 1 and 65535 (got %s)", port)
+		}
+
+		device := KeylightDevice{
+			&keylight.Device{
+				DNSAddr: host,
+				Port:    p,
+			},
+		}
+		devices = append(devices, device)
+	}
+
+	if len(devices) == 0 {
+		logrus.Debug("No lights provided, running discovery")
+		return Discover(ctx, discoverer)
+	}
+	return devices, nil
+}
+
 func main() {
+	lightList := []Device{}
+
 	lightAddrs := cli.NewStringSlice()
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	var cancel context.CancelFunc
 
 	app := &cli.App{
 		Flags: []cli.Flag{
 			&cli.StringSliceFlag{
 				Name:        "light",
-				Usage:       "Light to control",
+				Usage:       "Light to control (host:port)",
 				Destination: lightAddrs,
 			},
 			&cli.StringFlag{
@@ -80,37 +118,30 @@ func main() {
 
 			logrus.SetLevel(level)
 
-			ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
-			defer cancel()
-
 			if c.NArg() == 0 {
 				return nil
 			}
 
-			for _, lightAddr := range lightAddrs.Value() {
-				host, port, err := net.SplitHostPort(lightAddr)
-				if err != nil {
-					host = lightAddr
-					port = defaultPort
-				}
+			ctx, cancel = context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 
-				p, _ := strconv.Atoi(port)
-
-				device := &keylight.Device{
-					DNSAddr: host,
-					Port:    p,
-				}
-
-				lightList = append(lightList, device)
+			discovery, err := keylight.NewDiscovery()
+			if err != nil {
+				return fmt.Errorf("failed to create discovery client: %w", err)
 			}
 
-			if len(lightList) == 0 {
-				logrus.Debug("No lights provided, running discovery")
-				if err := discoverLights(ctx); err != nil {
-					return err
-				}
+			lightList, err = setupDevices(ctx, lightAddrs.Value(), &DiscoveryWrapper{discovery})
+			if err != nil {
+				cancel()
+				return err
 			}
 
+			return nil
+		},
+
+		After: func(c *cli.Context) error {
+			if cancel != nil {
+				cancel()
+			}
 			return nil
 		},
 
@@ -118,48 +149,60 @@ func main() {
 			{
 				Name:   "toggle",
 				Usage:  "Toggle lights on and off",
-				Action: func(c *cli.Context) error { return setLightState(c, LightToggle) },
+				Action: func(c *cli.Context) error { return setLightState(ctx, lightList, LightToggle) },
 			},
 			{
 				Name:   "on",
 				Usage:  "Turn lights on",
-				Action: func(c *cli.Context) error { return setLightState(c, LightOn) },
+				Action: func(c *cli.Context) error { return setLightState(ctx, lightList, LightOn) },
 			},
 			{
 				Name:   "off",
 				Usage:  "Turn lights off",
-				Action: func(c *cli.Context) error { return setLightState(c, LightOff) },
+				Action: func(c *cli.Context) error { return setLightState(ctx, lightList, LightOff) },
 			},
 			{
 				Name:        "brightness",
 				Usage:       "Control light brightness",
-				Subcommands: makeLightControlSubcommands(ControlBrightness),
+				Subcommands: makeLightControlSubcommands(ctx, lightList, ControlBrightness),
 			},
 			{
 				Name:        "temperature",
 				Usage:       "Control light temperature",
-				Subcommands: makeLightControlSubcommands(ControlTemperature),
+				Subcommands: makeLightControlSubcommands(ctx, lightList, ControlTemperature),
 			},
 			{
-				Name:   "status",
-				Usage:  "Get device information",
-				Action: func(c *cli.Context) error { return printDeviceStatus(c) },
+				Name:  "status",
+				Usage: "Get device information",
+				Action: func(c *cli.Context) error {
+					status, err := getDeviceStatus(ctx, lightList)
+					if err != nil {
+						return err
+					}
+
+					fmt.Println(status)
+
+					return nil
+				},
 			},
 		},
 	}
 
 	err := app.Run(os.Args)
 	if err != nil {
+		if err == context.Canceled {
+			logrus.Info("Interrupted")
+			return
+		}
 		logrus.Fatal(err)
 	}
 }
 
-func fetchLightGroups(ctx context.Context, lights []*keylight.Device) (map[*keylight.Device]*keylight.LightGroup, error) {
-	// call device.FetchLightGroup() for each device
-	lgs := make(map[*keylight.Device]*keylight.LightGroup)
+func fetchLightGroups(ctx context.Context, lights []Device) (map[Device]*keylight.LightGroup, error) {
+	lgs := make(map[Device]*keylight.LightGroup)
 
 	for _, device := range lights {
-		logrus.WithField("address", device.DNSAddr).Debug("Fetching light group")
+		logrus.WithField("address", device.GetDNSAddr()).Debug("Fetching light group")
 		lg, err := device.FetchLightGroup(ctx)
 		if err != nil {
 			return nil, err
@@ -171,10 +214,7 @@ func fetchLightGroups(ctx context.Context, lights []*keylight.Device) (map[*keyl
 	return lgs, nil
 }
 
-func setLightState(c *cli.Context, state LightState) error {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
-	defer cancel()
-
+func setLightState(ctx context.Context, lightList []Device, state LightState) error {
 	lgs, err := fetchLightGroups(ctx, lightList)
 	if err != nil {
 		return err
@@ -192,7 +232,7 @@ func setLightState(c *cli.Context, state LightState) error {
 			}
 
 			logrus.WithFields(logrus.Fields{
-				"address": device.DNSAddr,
+				"address": device.GetDNSAddr(),
 				"state":   LightState(light.On),
 			}).Debug("Updating light")
 		}
@@ -206,23 +246,23 @@ func setLightState(c *cli.Context, state LightState) error {
 	return nil
 }
 
-func makeLightControlSubcommands(controlField LightControlField) []*cli.Command {
+func makeLightControlSubcommands(ctx context.Context, lightList []Device, controlField LightControlField) []*cli.Command {
 	return []*cli.Command{
 		{
 			Name:   "step-up",
 			Usage:  "Increase brightness or temperature",
-			Action: func(c *cli.Context) error { return adjustLightControlField(c, controlField, 10) },
+			Action: func(c *cli.Context) error { return adjustLightControlField(ctx, lightList, controlField, 10) },
 		},
 		{
 			Name:   "step-down",
 			Usage:  "Decrease brightness or temperature",
-			Action: func(c *cli.Context) error { return adjustLightControlField(c, controlField, -10) },
+			Action: func(c *cli.Context) error { return adjustLightControlField(ctx, lightList, controlField, -10) },
 		},
 		{
 			Name:  "get",
 			Usage: "Get brightness or temperature",
 			Action: func(c *cli.Context) error {
-				val, err := getLightControlField(c, controlField)
+				val, err := getLightControlField(c.Context, lightList, controlField)
 				if err != nil {
 					return err
 				}
@@ -234,13 +274,13 @@ func makeLightControlSubcommands(controlField LightControlField) []*cli.Command 
 		{
 			Name:   "set",
 			Usage:  "Set brightness or temperature",
-			Action: func(c *cli.Context) error { return setLightControlField(c, controlField) },
+			Action: func(c *cli.Context) error { return setLightControlField(c, lightList, controlField) },
 		},
 	}
 }
 
-func adjustLightControlField(c *cli.Context, controlField LightControlField, change int) error {
-	value, err := getLightControlField(c, controlField)
+func adjustLightControlField(ctx context.Context, lightList []Device, controlField LightControlField, change int) error {
+	value, err := getLightControlField(ctx, lightList, controlField)
 	if err != nil {
 		return err
 	}
@@ -252,22 +292,19 @@ func adjustLightControlField(c *cli.Context, controlField LightControlField, cha
 		value = 0
 	}
 
-	return setLightControlFieldWithValue(c, controlField, value)
+	return setLightControlFieldWithValue(ctx, lightList, controlField, value)
 }
 
-func setLightControlField(c *cli.Context, controlField LightControlField) error {
+func setLightControlField(c *cli.Context, lightList []Device, controlField LightControlField) error {
 	value, err := strconv.Atoi(c.Args().First())
 	if err != nil {
 		return err
 	}
 
-	return setLightControlFieldWithValue(c, controlField, value)
+	return setLightControlFieldWithValue(c.Context, lightList, controlField, value)
 }
 
-func setLightControlFieldWithValue(c *cli.Context, controlField LightControlField, value int) error {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
-	defer cancel()
-
+func setLightControlFieldWithValue(ctx context.Context, lightList []Device, controlField LightControlField, value int) error {
 	lgs, err := fetchLightGroups(ctx, lightList)
 	if err != nil {
 		return err
@@ -283,7 +320,7 @@ func setLightControlFieldWithValue(c *cli.Context, controlField LightControlFiel
 			}
 		}
 
-		logrus.Debug("Updating light group for ", device.DNSAddr)
+		logrus.Debug("Updating light group for ", device.GetDNSAddr())
 		_, err = device.UpdateLightGroup(ctx, lightGroup)
 		if err != nil {
 			return err
@@ -293,10 +330,7 @@ func setLightControlFieldWithValue(c *cli.Context, controlField LightControlFiel
 	return nil
 }
 
-func getLightControlField(c *cli.Context, controlField LightControlField) (int, error) {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
-	defer cancel()
-
+func getLightControlField(ctx context.Context, lightList []Device, controlField LightControlField) (int, error) {
 	lgs, err := fetchLightGroups(ctx, lightList)
 	if err != nil {
 		return 0, err
@@ -316,63 +350,30 @@ func getLightControlField(c *cli.Context, controlField LightControlField) (int, 
 	return 0, nil
 }
 
-func printDeviceStatus(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
-	defer cancel()
+func getDeviceStatus(ctx context.Context, lightList []Device) (string, error) {
+	var sb strings.Builder
 
 	for _, device := range lightList {
-		logrus.Debug("Fetching device info for ", device.DNSAddr)
+		logrus.Debug("Fetching device info for ", device.GetDNSAddr())
 		deviceInfo, err := device.FetchDeviceInfo(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 
-		logrus.Debug("Fetching device settings for ", device.DNSAddr)
+		logrus.Debug("Fetching device settings for ", device.GetDNSAddr())
 		deviceSettings, err := device.FetchSettings(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 
-		logrus.Debug("Fetching light group for ", device.DNSAddr)
+		logrus.Debug("Fetching light group for ", device.GetDNSAddr())
 		lightGroup, err := device.FetchLightGroup(ctx)
 		if err != nil {
-			return err
+			return "", err
 		}
 
-		fmt.Printf("Device: %s\n", device.DNSAddr)
-		fmt.Printf("DeviceInfo: %+v\n", deviceInfo)
-		fmt.Printf("DeviceSettings: %+v\n", deviceSettings)
-		fmt.Printf("LightGroup: %+v\n", lightGroup)
-		for _, light := range lightGroup.Lights {
-			fmt.Printf("Light: %+v\n", light)
-		}
+		sb.WriteString(DeviceString(device, *deviceInfo, *deviceSettings, *lightGroup))
 	}
 
-	return nil
-}
-
-func discoverLights(ctx context.Context) error {
-	discovery, err := keylight.NewDiscovery()
-	if err != nil {
-		return err
-	}
-
-	logrus.Debug("Starting discovery")
-	errCh := make(chan error)
-	go func() {
-		errCh <- discovery.Run(ctx)
-	}()
-
-	discoveryTimeout := time.NewTimer(time.Second)
-	for {
-		select {
-		case device := <-discovery.ResultsCh():
-			lightList = append(lightList, device)
-			discoveryTimeout.Reset(time.Second)
-		case <-discoveryTimeout.C:
-			return nil
-		case err := <-errCh:
-			return err
-		}
-	}
+	return sb.String(), nil
 }
