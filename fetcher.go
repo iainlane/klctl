@@ -6,24 +6,24 @@ import (
 	"github.com/endocrimes/keylight-go"
 )
 
-type DeviceInfoFetcher interface {
+type Device interface {
+	GetDNSAddr() string
 	FetchDeviceInfo(ctx context.Context) (*keylight.DeviceInfo, error)
-}
-
-type SettingsFetcher interface {
 	FetchSettings(ctx context.Context) (*keylight.DeviceSettings, error)
-}
-
-type LightGroupFetcher interface {
 	FetchLightGroup(ctx context.Context) (*keylight.LightGroup, error)
-}
-
-type LightGroupUpdater interface {
 	UpdateLightGroup(ctx context.Context, lg *keylight.LightGroup) (*keylight.LightGroup, error)
 }
 
-// Make sure the upstream keylight.Device implements all these interfaces
-var _ DeviceInfoFetcher = &keylight.Device{}
-var _ SettingsFetcher = &keylight.Device{}
-var _ LightGroupFetcher = &keylight.Device{}
-var _ LightGroupUpdater = &keylight.Device{}
+// KeylightDevice is a wrapper around keylight.Device that implements the
+// interface above. This allows us to use the upstream keylight.Device directly,
+// but also to mock it out in tests, including property accessors.
+type KeylightDevice struct {
+	*keylight.Device
+}
+
+func (device KeylightDevice) GetDNSAddr() string {
+	return device.DNSAddr
+}
+
+// Make sure the upstream keylight.Device implements this interface.
+var _ Device = &KeylightDevice{}

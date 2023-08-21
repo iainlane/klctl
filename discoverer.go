@@ -8,7 +8,7 @@ import (
 )
 
 type Discoverer interface {
-	Discover(ctx context.Context) ([]*keylight.Device, error)
+	Discover(ctx context.Context) ([]Device, error)
 }
 
 type RealDiscoverer struct{}
@@ -23,13 +23,13 @@ func (te *discoveryTimeoutError) ExitCode() int {
 	return 1
 }
 
-func (rd *RealDiscoverer) Discover(ctx context.Context) ([]*keylight.Device, error) {
+func (rd *RealDiscoverer) Discover(ctx context.Context) ([]Device, error) {
 	discovery, err := keylight.NewDiscovery()
 	if err != nil {
 		return nil, err
 	}
 
-	var devices []*keylight.Device
+	var devices []Device
 	errCh := make(chan error)
 	go func() {
 		errCh <- discovery.Run(ctx)
@@ -46,7 +46,7 @@ func (rd *RealDiscoverer) Discover(ctx context.Context) ([]*keylight.Device, err
 			}
 			return nil, ctx.Err()
 		case device := <-discovery.ResultsCh():
-			devices = append(devices, device)
+			devices = append(devices, KeylightDevice{device})
 			discoveryTimeout.Reset(time.Second)
 		case <-discoveryTimeout.C:
 			return devices, nil

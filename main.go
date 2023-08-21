@@ -44,13 +44,14 @@ const (
 const defaultPort = "9123"
 
 var (
-	lightList []*keylight.Device
+	lightList []Device
 	logLevel  string
 	timeout   int
 )
 
-func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discoverer) ([]*keylight.Device, error) {
-	var devices []*keylight.Device
+func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discoverer) ([]Device, error) {
+	var devices []Device
+
 	for _, lightAddr := range lightAddrs {
 		host, port, err := net.SplitHostPort(lightAddr)
 		if err != nil {
@@ -63,9 +64,11 @@ func setupDevices(ctx context.Context, lightAddrs []string, discoverer Discovere
 			return nil, fmt.Errorf("port must be a number between 1 and 65535 (got %s)", port)
 		}
 
-		device := &keylight.Device{
-			DNSAddr: host,
-			Port:    p,
+		device := KeylightDevice{
+			&keylight.Device{
+				DNSAddr: host,
+				Port:    p,
+			},
 		}
 		devices = append(devices, device)
 	}
@@ -179,11 +182,11 @@ func main() {
 	}
 }
 
-func fetchLightGroups(ctx context.Context, lights []*keylight.Device) (map[*keylight.Device]*keylight.LightGroup, error) {
-	lgs := make(map[*keylight.Device]*keylight.LightGroup)
+func fetchLightGroups(ctx context.Context, lights []Device) (map[Device]*keylight.LightGroup, error) {
+	lgs := make(map[Device]*keylight.LightGroup)
 
 	for _, device := range lights {
-		logrus.WithField("address", device.DNSAddr).Debug("Fetching light group")
+		logrus.WithField("address", device.GetDNSAddr()).Debug("Fetching light group")
 		lg, err := device.FetchLightGroup(ctx)
 		if err != nil {
 			return nil, err
@@ -213,7 +216,7 @@ func setLightState(ctx context.Context, state LightState) error {
 			}
 
 			logrus.WithFields(logrus.Fields{
-				"address": device.DNSAddr,
+				"address": device.GetDNSAddr(),
 				"state":   LightState(light.On),
 			}).Debug("Updating light")
 		}
@@ -301,7 +304,7 @@ func setLightControlFieldWithValue(ctx context.Context, controlField LightContro
 			}
 		}
 
-		logrus.Debug("Updating light group for ", device.DNSAddr)
+		logrus.Debug("Updating light group for ", device.GetDNSAddr())
 		_, err = device.UpdateLightGroup(ctx, lightGroup)
 		if err != nil {
 			return err
@@ -333,25 +336,25 @@ func getLightControlField(ctx context.Context, controlField LightControlField) (
 
 func printDeviceStatus(ctx context.Context) error {
 	for _, device := range lightList {
-		logrus.Debug("Fetching device info for ", device.DNSAddr)
+		logrus.Debug("Fetching device info for ", device.GetDNSAddr())
 		deviceInfo, err := device.FetchDeviceInfo(ctx)
 		if err != nil {
 			return err
 		}
 
-		logrus.Debug("Fetching device settings for ", device.DNSAddr)
+		logrus.Debug("Fetching device settings for ", device.GetDNSAddr())
 		deviceSettings, err := device.FetchSettings(ctx)
 		if err != nil {
 			return err
 		}
 
-		logrus.Debug("Fetching light group for ", device.DNSAddr)
+		logrus.Debug("Fetching light group for ", device.GetDNSAddr())
 		lightGroup, err := device.FetchLightGroup(ctx)
 		if err != nil {
 			return err
 		}
 
-		fmt.Printf("Device: %s\n", device.DNSAddr)
+		fmt.Printf("Device: %s\n", device.GetDNSAddr())
 		fmt.Printf("DeviceInfo: %+v\n", deviceInfo)
 		fmt.Printf("DeviceSettings: %+v\n", deviceSettings)
 		fmt.Printf("LightGroup: %+v\n", lightGroup)
