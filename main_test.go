@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 
 	"github.com/endocrimes/keylight-go"
@@ -42,10 +43,11 @@ func (f *FakeDevice) UpdateLightGroup(ctx context.Context, lg *keylight.LightGro
 
 // FakeDiscoverer implements keylight.Discovery
 type FakeDiscoverer struct {
-	Devices []Device
-	Error   error
+	Devices  []Device
+	Error    error
+	deviceCh chan Device
 
-	resultsCh chan Device
+	once sync.Once
 }
 
 func (fd *FakeDiscoverer) Run(ctx context.Context) error {
@@ -53,24 +55,19 @@ func (fd *FakeDiscoverer) Run(ctx context.Context) error {
 		return fd.Error
 	}
 
-	if fd.resultsCh == nil {
-		fd.resultsCh = make(chan Device, len(fd.Devices))
-	}
-
-	for _, device := range fd.Devices {
-		fd.resultsCh <- device
-	}
-
 	<-ctx.Done()
 	return nil
 }
 
 func (fd *FakeDiscoverer) ResultsCh() <-chan Device {
-	if fd.resultsCh == nil {
-		fd.resultsCh = make(chan Device, len(fd.Devices))
-	}
+	fd.once.Do(func() {
+		fd.deviceCh = make(chan Device, len(fd.Devices))
+		for _, device := range fd.Devices {
+			fd.deviceCh <- device
+		}
+	})
 
-	return fd.resultsCh
+	return fd.deviceCh
 }
 
 func TestSetupDevices(t *testing.T) {
