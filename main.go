@@ -127,17 +127,17 @@ func main() {
 			{
 				Name:   "toggle",
 				Usage:  "Toggle lights on and off",
-				Action: func(c *cli.Context) error { return setLightState(c, LightToggle) },
+				Action: func(c *cli.Context) error { return setLightState(c.Context, LightToggle) },
 			},
 			{
 				Name:   "on",
 				Usage:  "Turn lights on",
-				Action: func(c *cli.Context) error { return setLightState(c, LightOn) },
+				Action: func(c *cli.Context) error { return setLightState(c.Context, LightOn) },
 			},
 			{
 				Name:   "off",
 				Usage:  "Turn lights off",
-				Action: func(c *cli.Context) error { return setLightState(c, LightOff) },
+				Action: func(c *cli.Context) error { return setLightState(c.Context, LightOff) },
 			},
 			{
 				Name:        "brightness",
@@ -152,7 +152,7 @@ func main() {
 			{
 				Name:   "status",
 				Usage:  "Get device information",
-				Action: func(c *cli.Context) error { return printDeviceStatus(c) },
+				Action: func(c *cli.Context) error { return printDeviceStatus(c.Context) },
 			},
 		},
 	}
@@ -179,8 +179,8 @@ func fetchLightGroups(ctx context.Context, lights []*keylight.Device) (map[*keyl
 	return lgs, nil
 }
 
-func setLightState(c *cli.Context, state LightState) error {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
+func setLightState(ctx context.Context, state LightState) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	lgs, err := fetchLightGroups(ctx, lightList)
@@ -219,18 +219,18 @@ func makeLightControlSubcommands(controlField LightControlField) []*cli.Command 
 		{
 			Name:   "step-up",
 			Usage:  "Increase brightness or temperature",
-			Action: func(c *cli.Context) error { return adjustLightControlField(c, controlField, 10) },
+			Action: func(c *cli.Context) error { return adjustLightControlField(c.Context, controlField, 10) },
 		},
 		{
 			Name:   "step-down",
 			Usage:  "Decrease brightness or temperature",
-			Action: func(c *cli.Context) error { return adjustLightControlField(c, controlField, -10) },
+			Action: func(c *cli.Context) error { return adjustLightControlField(c.Context, controlField, -10) },
 		},
 		{
 			Name:  "get",
 			Usage: "Get brightness or temperature",
 			Action: func(c *cli.Context) error {
-				val, err := getLightControlField(c, controlField)
+				val, err := getLightControlField(c.Context, controlField)
 				if err != nil {
 					return err
 				}
@@ -247,8 +247,8 @@ func makeLightControlSubcommands(controlField LightControlField) []*cli.Command 
 	}
 }
 
-func adjustLightControlField(c *cli.Context, controlField LightControlField, change int) error {
-	value, err := getLightControlField(c, controlField)
+func adjustLightControlField(ctx context.Context, controlField LightControlField, change int) error {
+	value, err := getLightControlField(ctx, controlField)
 	if err != nil {
 		return err
 	}
@@ -260,7 +260,7 @@ func adjustLightControlField(c *cli.Context, controlField LightControlField, cha
 		value = 0
 	}
 
-	return setLightControlFieldWithValue(c, controlField, value)
+	return setLightControlFieldWithValue(ctx, controlField, value)
 }
 
 func setLightControlField(c *cli.Context, controlField LightControlField) error {
@@ -269,11 +269,11 @@ func setLightControlField(c *cli.Context, controlField LightControlField) error 
 		return err
 	}
 
-	return setLightControlFieldWithValue(c, controlField, value)
+	return setLightControlFieldWithValue(c.Context, controlField, value)
 }
 
-func setLightControlFieldWithValue(c *cli.Context, controlField LightControlField, value int) error {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
+func setLightControlFieldWithValue(ctx context.Context, controlField LightControlField, value int) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	lgs, err := fetchLightGroups(ctx, lightList)
@@ -301,8 +301,8 @@ func setLightControlFieldWithValue(c *cli.Context, controlField LightControlFiel
 	return nil
 }
 
-func getLightControlField(c *cli.Context, controlField LightControlField) (int, error) {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
+func getLightControlField(ctx context.Context, controlField LightControlField) (int, error) {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	lgs, err := fetchLightGroups(ctx, lightList)
@@ -324,8 +324,8 @@ func getLightControlField(c *cli.Context, controlField LightControlField) (int, 
 	return 0, nil
 }
 
-func printDeviceStatus(c *cli.Context) error {
-	ctx, cancel := context.WithTimeout(c.Context, time.Duration(timeout)*time.Second)
+func printDeviceStatus(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
 	defer cancel()
 
 	for _, device := range lightList {
