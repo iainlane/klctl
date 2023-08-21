@@ -1,0 +1,24 @@
+name: Build, lint and test
+
+on:
+    pull_request:
+        branches:
+            - main
+    push:
+        branches:
+            - main
+
+jobs:
+    golangci:
+        name: lint
+        runs-on: ubuntu-latest
+        steps:
+        - uses: actions/checkout@v3.5.3
+        - uses: actions/setup-go@v4.1.0
+          with:
+            go-version: '1.21'
+            cache: false
+        - name: golangci-lint
+          uses: golangci/golangci-lint-action@v3.7.0
+          with:
+            version: v1.54
