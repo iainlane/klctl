@@ -1,0 +1,5 @@
+run:
+  timeout: 5m
+
+gocritic:
+  enabled-tags: [diagnostic, experimental, opinionated, performance, style]
