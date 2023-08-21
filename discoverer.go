@@ -13,6 +13,16 @@ type Discoverer interface {
 
 type RealDiscoverer struct{}
 
+type discoveryTimeoutError struct{}
+
+func (te *discoveryTimeoutError) Error() string {
+	return "timed out while discovering devices"
+}
+
+func (te *discoveryTimeoutError) ExitCode() int {
+	return 1
+}
+
 func (rd *RealDiscoverer) Discover(ctx context.Context) ([]*keylight.Device, error) {
 	discovery, err := keylight.NewDiscovery()
 	if err != nil {
@@ -28,6 +38,8 @@ func (rd *RealDiscoverer) Discover(ctx context.Context) ([]*keylight.Device, err
 	discoveryTimeout := time.NewTimer(time.Second)
 	for {
 		select {
+		case <-ctx.Done():
+			return nil, &discoveryTimeoutError{}
 		case device := <-discovery.ResultsCh():
 			devices = append(devices, device)
 			discoveryTimeout.Reset(time.Second)
