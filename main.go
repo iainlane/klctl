@@ -164,7 +164,6 @@ func main() {
 }
 
 func fetchLightGroups(ctx context.Context, lights []*keylight.Device) (map[*keylight.Device]*keylight.LightGroup, error) {
-	// call device.FetchLightGroup() for each device
 	lgs := make(map[*keylight.Device]*keylight.LightGroup)
 
 	for _, device := range lights {
