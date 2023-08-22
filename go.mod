@@ -7,7 +7,7 @@ toolchain go1.21.0
 require (
 	github.com/endocrimes/keylight-go v0.0.0-20201110202118-a45c372ed336
 	github.com/sirupsen/logrus v1.9.3
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.8.4
 	github.com/urfave/cli/v2 v2.25.7
 )
 
