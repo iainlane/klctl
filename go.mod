@@ -8,11 +8,11 @@ require (
 	github.com/endocrimes/keylight-go v0.0.0-20201110202118-a45c372ed336
 	github.com/sirupsen/logrus v1.9.3
 	github.com/stretchr/testify v1.9.0
-	github.com/urfave/cli/v2 v2.27.4
+	github.com/urfave/cli/v2 v2.27.5
 )
 
 require (
-	github.com/cpuguy83/go-md2man/v2 v2.0.4 // indirect
+	github.com/cpuguy83/go-md2man/v2 v2.0.5 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/miekg/dns v1.1.55 // indirect
 	github.com/oleksandr/bonjour v0.0.0-20210301155756-30f43c61b915 // indirect
