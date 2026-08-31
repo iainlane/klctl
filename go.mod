@@ -4,7 +4,7 @@ go 1.23
 
 require (
 	github.com/endocrimes/keylight-go v0.0.0-20201110202118-a45c372ed336
-	github.com/sirupsen/logrus v1.10.1
+	github.com/sirupsen/logrus v1.10.2
 	github.com/stretchr/testify v1.12.1
 	github.com/urfave/cli/v2 v2.27.7
 )
